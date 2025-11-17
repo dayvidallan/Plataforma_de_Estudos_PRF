@@ -44,8 +44,8 @@ async function startServer() {
   const upload = multer({ storage: multer.memoryStorage() });
   app.post("/api/upload", upload.single("file"), async (req, res) => {
     try {
-      if (!req.file || !req.body.missionId) {
-        return res.status(400).json({ error: "Missing file or missionId" });
+      if (!req.file || !req.body.topicId) {
+        return res.status(400).json({ error: "Missing file or topicId" });
       }
 
       const topicId = parseInt(req.body.topicId);
