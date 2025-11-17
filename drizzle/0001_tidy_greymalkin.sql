@@ -1,6 +1,6 @@
 CREATE TABLE `attachments` (
 	`id` int AUTO_INCREMENT NOT NULL,
-	`topicId` int NOT NULL,
+	`roundId` int NOT NULL,
 	`fileName` varchar(255) NOT NULL,
 	`fileUrl` text NOT NULL,
 	`fileKey` varchar(512) NOT NULL,
@@ -10,16 +10,6 @@ CREATE TABLE `attachments` (
 	`createdAt` timestamp NOT NULL DEFAULT (now()),
 	`updatedAt` timestamp NOT NULL DEFAULT (now()) ON UPDATE CURRENT_TIMESTAMP,
 	CONSTRAINT `attachments_id` PRIMARY KEY(`id`)
-);
---> statement-breakpoint
-CREATE TABLE `comments` (
-	`id` int AUTO_INCREMENT NOT NULL,
-	`missionId` int NOT NULL,
-	`userId` int NOT NULL,
-	`content` text NOT NULL,
-	`createdAt` timestamp NOT NULL DEFAULT (now()),
-	`updatedAt` timestamp NOT NULL DEFAULT (now()) ON UPDATE CURRENT_TIMESTAMP,
-	CONSTRAINT `comments_id` PRIMARY KEY(`id`)
 );
 --> statement-breakpoint
 CREATE TABLE `missions` (

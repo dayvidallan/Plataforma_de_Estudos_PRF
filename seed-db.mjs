@@ -1,63 +1,65 @@
-import { drizzle } from 'drizzle-orm/mysql2';
-import { rounds, missions, topics, users } from './drizzle/schema.ts';
+import mysql from 'mysql2/promise';
+import fs from 'fs';
 
-const db = drizzle(process.env.DATABASE_URL);
+const courseData = JSON.parse(fs.readFileSync('./estrutura_curso.json', 'utf-8'));
+const dbUrl = process.env.DATABASE_URL;
 
-async function seed() {
-  console.log('🌱 Iniciando seed do banco de dados...');
-
-  // Criar rodadas
-  const roundsData = [
-    { name: 'Rodada 1 - Fundamentos', description: 'Conceitos básicos de PRF', order: 1 },
-    { name: 'Rodada 2 - Intermediário', description: 'Tópicos mais avançados', order: 2 },
-    { name: 'Rodada 3 - Avançado', description: 'Preparação final', order: 3 },
-  ];
-
-  const createdRounds = [];
-  for (const round of roundsData) {
-    const result = await db.insert(rounds).values(round);
-    createdRounds.push({ ...round, id: result.insertId });
-    console.log(`✓ Rodada criada: ${round.name}`);
-  }
-
-  // Criar missões para cada rodada
-  const missionsData = [
-    { roundId: createdRounds[0].id, name: 'Missão 1.1 - Introdução', description: 'Primeiros passos', order: 1 },
-    { roundId: createdRounds[0].id, name: 'Missão 1.2 - Conceitos', description: 'Aprender conceitos', order: 2 },
-    { roundId: createdRounds[1].id, name: 'Missão 2.1 - Prática', description: 'Exercícios práticos', order: 1 },
-    { roundId: createdRounds[1].id, name: 'Missão 2.2 - Casos', description: 'Casos de uso', order: 2 },
-    { roundId: createdRounds[2].id, name: 'Missão 3.1 - Revisão', description: 'Revisão geral', order: 1 },
-  ];
-
-  const createdMissions = [];
-  for (const mission of missionsData) {
-    const result = await db.insert(missions).values(mission);
-    createdMissions.push({ ...mission, id: result.insertId });
-    console.log(`✓ Missão criada: ${mission.name}`);
-  }
-
-  // Criar tópicos para cada missão
-  const topicsData = [
-    { missionId: createdMissions[0].id, name: 'Tópico 1: O que é PRF?', description: 'Definição e contexto', order: 1 },
-    { missionId: createdMissions[0].id, name: 'Tópico 2: História', description: 'Histórico da PRF', order: 2 },
-    { missionId: createdMissions[1].id, name: 'Tópico 3: Estrutura', description: 'Estrutura organizacional', order: 1 },
-    { missionId: createdMissions[1].id, name: 'Tópico 4: Competências', description: 'Áreas de competência', order: 2 },
-    { missionId: createdMissions[2].id, name: 'Tópico 5: Exercício 1', description: 'Primeiro exercício', order: 1 },
-    { missionId: createdMissions[2].id, name: 'Tópico 6: Exercício 2', description: 'Segundo exercício', order: 2 },
-    { missionId: createdMissions[3].id, name: 'Tópico 7: Caso 1', description: 'Primeiro caso', order: 1 },
-    { missionId: createdMissions[3].id, name: 'Tópico 8: Caso 2', description: 'Segundo caso', order: 2 },
-    { missionId: createdMissions[4].id, name: 'Tópico 9: Revisão Final', description: 'Revisão de todos os tópicos', order: 1 },
-  ];
-
-  for (const topic of topicsData) {
-    await db.insert(topics).values(topic);
-    console.log(`✓ Tópico criado: ${topic.name}`);
-  }
-
-  console.log('✅ Seed concluído com sucesso!');
+if (!dbUrl) {
+  console.error('DATABASE_URL not set');
+  process.exit(1);
 }
 
-seed().catch(err => {
-  console.error('❌ Erro ao fazer seed:', err);
+const connection = await mysql.createConnection(dbUrl);
+
+try {
+  // Clear existing data
+  await connection.query('DELETE FROM userProgress');
+  await connection.query('DELETE FROM attachments');
+  await connection.query('DELETE FROM topics');
+  await connection.query('DELETE FROM missions');
+  await connection.query('DELETE FROM rounds');
+
+  let roundOrder = 1;
+
+  for (const round of courseData) {
+    // Insert round
+    const [roundResult] = await connection.query(
+      'INSERT INTO rounds (name, description, `order`) VALUES (?, ?, ?)',
+      [round.nome, '', roundOrder]
+    );
+    const roundId = roundResult.insertId;
+    console.log(`Inserted round: ${round.nome} (ID: ${roundId})`);
+
+    let missionOrder = 1;
+    for (const mission of round.missoes) {
+      // Insert mission
+      const [missionResult] = await connection.query(
+        'INSERT INTO missions (roundId, name, description, `order`) VALUES (?, ?, ?, ?)',
+        [roundId, mission.nome, '', missionOrder]
+      );
+      const missionId = missionResult.insertId;
+      console.log(`  Inserted mission: ${mission.nome} (ID: ${missionId})`);
+
+      let topicOrder = 1;
+      for (const topic of mission.topicos) {
+        // Insert topic
+        await connection.query(
+          'INSERT INTO topics (missionId, name, description, `order`) VALUES (?, ?, ?, ?)',
+          [missionId, topic.nome, '', topicOrder]
+        );
+        topicOrder++;
+      }
+
+      missionOrder++;
+    }
+
+    roundOrder++;
+  }
+
+  console.log('Database seeded successfully!');
+} catch (error) {
+  console.error('Error seeding database:', error);
   process.exit(1);
-});
+} finally {
+  await connection.end();
+}
