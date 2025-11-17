@@ -181,6 +181,147 @@ export const appRouter = router({
       return { success: true };
     }),
   }),
+
+  admin: router({
+    // Criar Rodada
+    createRound: protectedProcedure.input((val: unknown) => {
+      if (typeof val === 'object' && val !== null && 'name' in val) {
+        return {
+          name: (val as { name: unknown }).name as string,
+          description: (val as { description?: unknown }).description as string | undefined,
+        };
+      }
+      throw new Error('Invalid input');
+    }).mutation(async ({ ctx, input }) => {
+      if (ctx.user.role !== 'admin') throw new Error('Unauthorized');
+      const { getDb } = await import("../server/db");
+      const { rounds } = await import("../drizzle/schema");
+
+      const db = await getDb();
+      if (!db) throw new Error('Database not available');
+
+      const result = await db.insert(rounds).values({
+        name: input.name,
+        description: input.description || null,
+        order: 0,
+      });
+
+      return { success: true, id: result[0].insertId };
+    }),
+
+    // Deletar Rodada
+    deleteRound: protectedProcedure.input((val: unknown) => {
+      if (typeof val === 'object' && val !== null && 'roundId' in val) {
+        return { roundId: (val as { roundId: unknown }).roundId as number };
+      }
+      throw new Error('Invalid input');
+    }).mutation(async ({ ctx, input }) => {
+      if (ctx.user.role !== 'admin') throw new Error('Unauthorized');
+      const { getDb } = await import("../server/db");
+      const { rounds } = await import("../drizzle/schema");
+      const { eq } = await import("drizzle-orm");
+
+      const db = await getDb();
+      if (!db) throw new Error('Database not available');
+
+      await db.delete(rounds).where(eq(rounds.id, input.roundId));
+      return { success: true };
+    }),
+
+    // Criar Missão
+    createMission: protectedProcedure.input((val: unknown) => {
+      if (typeof val === 'object' && val !== null && 'roundId' in val && 'name' in val) {
+        return {
+          roundId: (val as { roundId: unknown }).roundId as number,
+          name: (val as { name: unknown }).name as string,
+          description: (val as { description?: unknown }).description as string | undefined,
+        };
+      }
+      throw new Error('Invalid input');
+    }).mutation(async ({ ctx, input }) => {
+      if (ctx.user.role !== 'admin') throw new Error('Unauthorized');
+      const { getDb } = await import("../server/db");
+      const { missions } = await import("../drizzle/schema");
+
+      const db = await getDb();
+      if (!db) throw new Error('Database not available');
+
+      const result = await db.insert(missions).values({
+        roundId: input.roundId,
+        name: input.name,
+        description: input.description || null,
+        order: 0,
+      });
+
+      return { success: true, id: result[0].insertId };
+    }),
+
+    // Deletar Missão
+    deleteMission: protectedProcedure.input((val: unknown) => {
+      if (typeof val === 'object' && val !== null && 'missionId' in val) {
+        return { missionId: (val as { missionId: unknown }).missionId as number };
+      }
+      throw new Error('Invalid input');
+    }).mutation(async ({ ctx, input }) => {
+      if (ctx.user.role !== 'admin') throw new Error('Unauthorized');
+      const { getDb } = await import("../server/db");
+      const { missions } = await import("../drizzle/schema");
+      const { eq } = await import("drizzle-orm");
+
+      const db = await getDb();
+      if (!db) throw new Error('Database not available');
+
+      await db.delete(missions).where(eq(missions.id, input.missionId));
+      return { success: true };
+    }),
+
+    // Criar Tópico
+    createTopic: protectedProcedure.input((val: unknown) => {
+      if (typeof val === 'object' && val !== null && 'missionId' in val && 'name' in val) {
+        return {
+          missionId: (val as { missionId: unknown }).missionId as number,
+          name: (val as { name: unknown }).name as string,
+          description: (val as { description?: unknown }).description as string | undefined,
+        };
+      }
+      throw new Error('Invalid input');
+    }).mutation(async ({ ctx, input }) => {
+      if (ctx.user.role !== 'admin') throw new Error('Unauthorized');
+      const { getDb } = await import("../server/db");
+      const { topics } = await import("../drizzle/schema");
+
+      const db = await getDb();
+      if (!db) throw new Error('Database not available');
+
+      const result = await db.insert(topics).values({
+        missionId: input.missionId,
+        name: input.name,
+        description: input.description || null,
+        order: 0,
+      });
+
+      return { success: true, id: result[0].insertId };
+    }),
+
+    // Deletar Tópico
+    deleteTopic: protectedProcedure.input((val: unknown) => {
+      if (typeof val === 'object' && val !== null && 'topicId' in val) {
+        return { topicId: (val as { topicId: unknown }).topicId as number };
+      }
+      throw new Error('Invalid input');
+    }).mutation(async ({ ctx, input }) => {
+      if (ctx.user.role !== 'admin') throw new Error('Unauthorized');
+      const { getDb } = await import("../server/db");
+      const { topics } = await import("../drizzle/schema");
+      const { eq } = await import("drizzle-orm");
+
+      const db = await getDb();
+      if (!db) throw new Error('Database not available');
+
+      await db.delete(topics).where(eq(topics.id, input.topicId));
+      return { success: true };
+    }),
+  }),
 });
 
 export type AppRouter = typeof appRouter;

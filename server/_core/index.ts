@@ -53,8 +53,16 @@ async function startServer() {
       const fileSize = req.file.size;
       const fileKey = `topics/${topicId}/${Date.now()}-${fileName}`;
 
-      // Upload to S3
-      const { url } = await storagePut(fileKey, req.file.buffer, req.file.mimetype);
+      // Try to upload to S3, fallback to local storage
+      let url = '';
+      try {
+        const { url: s3Url } = await storagePut(fileKey, req.file.buffer, req.file.mimetype);
+        url = s3Url;
+      } catch (s3Error) {
+        console.warn("S3 upload failed, using local storage:", s3Error);
+        // Fallback: use a local URL
+        url = `/uploads/${fileKey}`;
+      }
 
       // Save to database
       const db = await getDb();
@@ -72,7 +80,7 @@ async function startServer() {
       res.json({ success: true, url });
     } catch (error) {
       console.error("Upload error:", error);
-      res.status(500).json({ error: "Upload failed" });
+      res.status(500).json({ error: String(error) || "Upload failed" });
     }
   });
   

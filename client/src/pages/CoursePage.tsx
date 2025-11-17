@@ -1,4 +1,4 @@
-import { useState, useRef, useMemo } from 'react';
+import { useState, useRef } from 'react';
 import { trpc } from '@/lib/trpc';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -15,6 +15,8 @@ export default function CoursePage() {
   const [commentText, setCommentText] = useState<string>('');
   const [uploadingFile, setUploadingFile] = useState<boolean>(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [localProgress, setLocalProgress] = useState<Set<number>>(new Set());
+  const [localComments, setLocalComments] = useState<Map<number, Array<any>>>(new Map());
 
   // Fetch rounds
   const { data: rounds, isLoading: roundsLoading } = trpc.course.getRounds.useQuery();
@@ -50,70 +52,21 @@ export default function CoursePage() {
   );
 
   // Fetch comments for selected mission
-  const { data: comments, refetch: refetchComments } = trpc.course.getCommentsByMissionId.useQuery(
+  const { data: comments } = trpc.course.getCommentsByMissionId.useQuery(
     { missionId: expandedMission || 0 },
     { enabled: expandedMission !== null }
   );
 
-  // Toggle topic progress mutation with optimistic update
+  // Toggle topic progress mutation
   const toggleProgressMutation = trpc.course.toggleTopicProgress.useMutation({
-    onMutate: async ({ topicId }) => {
-      // Cancel outgoing refetches
-      await trpc.useUtils().course.getUserProgress.cancel();
-      
-      // Get previous data
-      const previousProgress = trpc.useUtils().course.getUserProgress.getData();
-      
-      // Optimistically update the cache
-      if (previousProgress) {
-        const isCompleted = previousProgress.some(p => p.topicId === topicId && p.completed === 1);
-        const updated = isCompleted
-          ? previousProgress.filter(p => !(p.topicId === topicId && p.completed === 1))
-          : [...previousProgress, { id: Math.random(), userId: user?.id || 0, topicId, completed: 1, completedAt: new Date(), createdAt: new Date(), updatedAt: new Date() }];
-        
-        trpc.useUtils().course.getUserProgress.setData(undefined, updated);
-      }
-      
-      return { previousProgress };
-    },
-    onError: (err, newData, context) => {
-      // Rollback on error
-      if (context?.previousProgress) {
-        trpc.useUtils().course.getUserProgress.setData(undefined, context.previousProgress);
-      }
-    },
     onSuccess: () => {
-      // Refetch to confirm
       void trpc.useUtils().course.getUserProgress.invalidate();
       void trpc.useUtils().course.getRoundProgress.invalidate();
     },
   });
 
-  // Add comment mutation with optimistic update
+  // Add comment mutation
   const addCommentMutation = trpc.course.addComment.useMutation({
-    onMutate: async (newComment) => {
-      await trpc.useUtils().course.getCommentsByMissionId.cancel();
-      const previousComments = trpc.useUtils().course.getCommentsByMissionId.getData({ missionId: expandedMission || 0 });
-      
-      if (previousComments) {
-        const optimisticComment = {
-          id: Math.random(),
-          missionId: newComment.missionId,
-          userId: user?.id || 0,
-          content: newComment.content,
-          createdAt: new Date(),
-          updatedAt: new Date(),
-        };
-        trpc.useUtils().course.getCommentsByMissionId.setData({ missionId: expandedMission || 0 }, [...previousComments, optimisticComment]);
-      }
-      
-      return { previousComments };
-    },
-    onError: (err, newData, context) => {
-      if (context?.previousComments) {
-        trpc.useUtils().course.getCommentsByMissionId.setData({ missionId: expandedMission || 0 }, context.previousComments);
-      }
-    },
     onSuccess: () => {
       setCommentText('');
       void trpc.useUtils().course.getCommentsByMissionId.invalidate();
@@ -121,11 +74,34 @@ export default function CoursePage() {
   });
 
   const handleToggleProgress = (topicId: number) => {
+    // Optimistic update
+    const newProgress = new Set(localProgress);
+    if (newProgress.has(topicId)) {
+      newProgress.delete(topicId);
+    } else {
+      newProgress.add(topicId);
+    }
+    setLocalProgress(newProgress);
+
+    // Send mutation
     toggleProgressMutation.mutate({ topicId });
   };
 
   const handleAddComment = () => {
     if (commentText.trim() && expandedMission) {
+      // Optimistic update
+      const newComments = new Map(localComments);
+      const missionComments = newComments.get(expandedMission) || [];
+      missionComments.push({
+        id: Math.random(),
+        content: commentText,
+        userId: user?.id,
+        createdAt: new Date(),
+      });
+      newComments.set(expandedMission, missionComments);
+      setLocalComments(newComments);
+
+      // Send mutation
       addCommentMutation.mutate({
         missionId: expandedMission,
         content: commentText,
@@ -153,8 +129,10 @@ export default function CoursePage() {
         if (fileInputRef.current) {
           fileInputRef.current.value = '';
         }
+        alert('Arquivo enviado com sucesso!');
       } else {
-        alert('Erro ao fazer upload do arquivo');
+        const errorData = await response.json();
+        alert(`Erro ao fazer upload: ${errorData.error}`);
       }
     } catch (error) {
       console.error('Upload error:', error);
@@ -165,7 +143,19 @@ export default function CoursePage() {
   };
 
   const isTopicCompleted = (topicId: number) => {
+    // Check local optimistic update first
+    if (localProgress.has(topicId)) {
+      return true;
+    }
+    // Then check server state
     return userProgress?.some(p => p.topicId === topicId && p.completed === 1) || false;
+  };
+
+  const getDisplayComments = () => {
+    if (!expandedMission) return [];
+    const localMissionComments = localComments.get(expandedMission) || [];
+    const serverComments = comments || [];
+    return [...localMissionComments, ...serverComments];
   };
 
   if (roundsLoading) {
@@ -197,7 +187,17 @@ export default function CoursePage() {
         <div className="max-w-7xl mx-auto px-4 py-4 flex items-center justify-between">
           <h1 className="text-2xl font-bold">Plataforma de Estudos PRF</h1>
           <div className="flex items-center gap-4">
-            <span className="text-sm text-gray-400">Bem-vindo, {user?.name}</span>
+            <span className="text-sm text-gray-400">Bem-vindo, {user?.name || 'Usuário'}</span>
+            {user?.role === 'admin' && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => navigate('/admin')}
+                className="text-blue-400 border-blue-600 hover:bg-blue-900"
+              >
+                Admin
+              </Button>
+            )}
             <Button
               variant="outline"
               size="sm"
@@ -270,190 +270,151 @@ export default function CoursePage() {
                       <div key={mission.id} className="border border-gray-700 rounded-lg overflow-hidden">
                         {/* Mission Header */}
                         <button
-                          onClick={() => setExpandedMission(expandedMission === mission.id ? null : mission.id)}
-                          className="w-full bg-gray-700 hover:bg-gray-600 transition-colors px-6 py-4 flex items-center justify-between"
+                          onClick={() => {
+                            setExpandedMission(expandedMission === mission.id ? null : mission.id);
+                            setExpandedTopic(null);
+                          }}
+                          className="w-full px-4 py-3 bg-gray-700 hover:bg-gray-600 transition-colors flex items-center justify-between"
                         >
-                          <div className="flex items-center gap-3">
-                            {expandedMission === mission.id ? (
-                              <ChevronDown className="w-5 h-5" />
-                            ) : (
-                              <ChevronRight className="w-5 h-5" />
-                            )}
-                            <span className="font-semibold text-lg">{mission.name}</span>
-                          </div>
+                          <span className="font-semibold">{mission.name}</span>
+                          {expandedMission === mission.id ? (
+                            <ChevronDown className="w-5 h-5" />
+                          ) : (
+                            <ChevronRight className="w-5 h-5" />
+                          )}
                         </button>
 
                         {/* Mission Content */}
-                        {expandedMission === mission.id && topics && (
-                          <div className="bg-gray-800 p-6 space-y-6">
-                            {/* Topics with Checkboxes */}
-                            <div className="space-y-3">
-                              <h3 className="font-semibold text-gray-300 mb-4">Tópicos ({topics.length})</h3>
-                              {topics.length > 0 ? (
-                                <div className="space-y-2 max-h-96 overflow-y-auto">
-                                  {topics.map((topic) => (
-                                    <div key={topic.id} className="border border-gray-600 rounded">
-                                      {/* Topic Header */}
+                        {expandedMission === mission.id && (
+                          <div className="p-4 bg-gray-750 space-y-4">
+                            {/* Topics */}
+                            <div>
+                              <h3 className="text-lg font-semibold mb-3">Tópicos ({topics?.length || 0})</h3>
+                              <div className="space-y-3">
+                                {topics?.map((topic) => (
+                                  <div key={topic.id} className="border border-gray-600 rounded p-3">
+                                    {/* Topic Header */}
+                                    <div className="flex items-start gap-3">
+                                      <Checkbox
+                                        checked={isTopicCompleted(topic.id)}
+                                        onCheckedChange={() => handleToggleProgress(topic.id)}
+                                        className="mt-1"
+                                      />
                                       <button
-                                        onClick={() => setExpandedTopic(expandedTopic === topic.id ? null : topic.id)}
-                                        className="w-full flex items-start gap-3 p-3 bg-gray-700 hover:bg-gray-600 transition-colors"
+                                        onClick={() => {
+                                          setExpandedTopic(expandedTopic === topic.id ? null : topic.id);
+                                        }}
+                                        className="flex-1 text-left hover:text-blue-400 transition-colors"
                                       >
-                                        {isAuthenticated ? (
-                                          <Checkbox
-                                            checked={isTopicCompleted(topic.id)}
-                                            onCheckedChange={() => handleToggleProgress(topic.id)}
-                                            disabled={toggleProgressMutation.isPending}
-                                            className="mt-1"
-                                            onClick={(e) => e.stopPropagation()}
-                                          />
-                                        ) : (
-                                          <div className="w-5 h-5 border border-gray-500 rounded mt-1" />
-                                        )}
-                                        <div className="flex-1 text-left">
-                                          <span className={`${isTopicCompleted(topic.id) ? 'line-through text-gray-500' : 'text-gray-100'}`}>
-                                            {topic.name}
-                                          </span>
+                                        <div className="flex items-center gap-2">
+                                          {expandedTopic === topic.id ? (
+                                            <ChevronDown className="w-4 h-4" />
+                                          ) : (
+                                            <ChevronRight className="w-4 h-4" />
+                                          )}
+                                          <span>{topic.name}</span>
                                         </div>
-                                        {expandedTopic === topic.id ? (
-                                          <ChevronDown className="w-4 h-4 text-gray-400" />
-                                        ) : (
-                                          <ChevronRight className="w-4 h-4 text-gray-400" />
-                                        )}
                                       </button>
+                                    </div>
 
-                                      {/* Topic Content */}
-                                      {expandedTopic === topic.id && (
-                                        <div className="bg-gray-900 p-4 space-y-4 border-t border-gray-600">
-                                          {/* Attachments Section */}
-                                          <div>
-                                            <h4 className="font-semibold text-gray-300 mb-3 flex items-center gap-2">
-                                              <FileText className="w-4 h-4" />
-                                              Materiais ({attachments?.length || 0})
-                                            </h4>
-                                            
-                                            {/* Upload Section */}
-                                            {isAuthenticated && (
-                                              <div className="mb-3">
-                                                <input
-                                                  ref={fileInputRef}
-                                                  type="file"
-                                                  onChange={handleFileUpload}
-                                                  disabled={uploadingFile}
-                                                  className="hidden"
-                                                  accept=".pdf,.doc,.docx,.txt,.jpg,.jpeg,.png,.xls,.xlsx"
-                                                />
-                                                <Button
-                                                  onClick={() => fileInputRef.current?.click()}
-                                                  disabled={uploadingFile}
-                                                  className="w-full bg-green-600 hover:bg-green-700 flex items-center gap-2"
-                                                >
-                                                  {uploadingFile ? (
-                                                    <>
-                                                      <Loader2 className="w-4 h-4 animate-spin" />
-                                                      Enviando...
-                                                    </>
-                                                  ) : (
-                                                    <>
-                                                      <Upload className="w-4 h-4" />
-                                                      Adicionar Arquivo
-                                                    </>
-                                                  )}
-                                                </Button>
-                                              </div>
-                                            )}
-
-                                            {/* Attachments List */}
+                                    {/* Topic Details */}
+                                    {expandedTopic === topic.id && (
+                                      <div className="mt-4 ml-8 space-y-4 border-t border-gray-600 pt-4">
+                                        {/* Materials Section */}
+                                        <div>
+                                          <h4 className="font-semibold mb-2 flex items-center gap-2">
+                                            <FileText className="w-4 h-4" />
+                                            Materiais ({attachments?.length || 0})
+                                          </h4>
+                                          <div className="space-y-2">
                                             {attachments && attachments.length > 0 ? (
-                                              <div className="space-y-2">
-                                                {attachments.map((attachment) => (
-                                                  <a
-                                                    key={attachment.id}
-                                                    href={attachment.fileUrl}
-                                                    target="_blank"
-                                                    rel="noopener noreferrer"
-                                                    className="flex items-center gap-3 p-3 bg-gray-700 rounded hover:bg-gray-600 transition-colors"
-                                                  >
-                                                    <FileText className="w-4 h-4 text-blue-400" />
-                                                    <div className="flex-1">
-                                                      <p className="text-sm font-medium text-gray-100">{attachment.fileName}</p>
-                                                      <p className="text-xs text-gray-400">
-                                                        {attachment.fileSize ? `${(attachment.fileSize / 1024).toFixed(2)} KB` : 'Tamanho desconhecido'}
-                                                      </p>
-                                                    </div>
-                                                  </a>
-                                                ))}
-                                              </div>
+                                              attachments.map((attachment) => (
+                                                <a
+                                                  key={attachment.id}
+                                                  href={attachment.fileUrl}
+                                                  target="_blank"
+                                                  rel="noopener noreferrer"
+                                                  className="block p-2 bg-gray-700 rounded hover:bg-gray-600 transition-colors text-blue-400 truncate"
+                                                >
+                                                  📄 {attachment.fileName}
+                                                </a>
+                                              ))
                                             ) : (
-                                              <div className="bg-gray-700 rounded p-3 text-center text-gray-400 text-sm">
-                                                <p>Nenhum material disponível</p>
-                                              </div>
+                                              <p className="text-gray-400 text-sm">Nenhum material disponível</p>
                                             )}
                                           </div>
-                                        </div>
-                                      )}
-                                    </div>
-                                  ))}
-                                </div>
-                              ) : (
-                                <p className="text-gray-400 italic">Nenhum tópico disponível</p>
-                              )}
-                            </div>
-
-                            {/* Comments Section */}
-                            <div className="border-t border-gray-700 pt-6">
-                              <h3 className="font-semibold text-gray-300 mb-4">Comentários ({comments?.length || 0})</h3>
-
-                              {isAuthenticated ? (
-                                <div className="space-y-4">
-                                  {/* Comment Input */}
-                                  <div className="flex gap-3">
-                                    <input
-                                      type="text"
-                                      value={commentText}
-                                      onChange={(e) => setCommentText(e.target.value)}
-                                      onKeyPress={(e) => {
-                                        if (e.key === 'Enter') {
-                                          handleAddComment();
-                                        }
-                                      }}
-                                      placeholder="Adicione um comentário..."
-                                      className="flex-1 bg-gray-700 border border-gray-600 rounded px-4 py-2 text-white placeholder-gray-400 focus:outline-none focus:border-blue-500"
-                                    />
-                                    <Button
-                                      onClick={handleAddComment}
-                                      disabled={addCommentMutation.isPending || !commentText.trim()}
-                                      className="bg-blue-600 hover:bg-blue-700"
-                                    >
-                                      <Send className="w-4 h-4" />
-                                    </Button>
-                                  </div>
-
-                                  {/* Comments List */}
-                                  {comments && comments.length > 0 ? (
-                                    <div className="space-y-3 max-h-64 overflow-y-auto">
-                                      {comments.map((comment) => (
-                                        <div key={comment.id} className="bg-gray-700 rounded p-4">
-                                          <div className="flex items-start justify-between mb-2">
-                                            <span className="text-sm font-medium text-gray-100">Usuário</span>
-                                            <span className="text-xs text-gray-400">
-                                              {new Date(comment.createdAt).toLocaleDateString('pt-BR')}
-                                            </span>
+                                          <div className="mt-3">
+                                            <input
+                                              ref={fileInputRef}
+                                              type="file"
+                                              onChange={handleFileUpload}
+                                              disabled={uploadingFile}
+                                              className="hidden"
+                                            />
+                                            <Button
+                                              onClick={() => fileInputRef.current?.click()}
+                                              disabled={uploadingFile}
+                                              className="w-full bg-green-600 hover:bg-green-700"
+                                            >
+                                              {uploadingFile ? (
+                                                <>
+                                                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                                                  Enviando...
+                                                </>
+                                              ) : (
+                                                <>
+                                                  <Upload className="w-4 h-4 mr-2" />
+                                                  Adicionar Arquivo
+                                                </>
+                                              )}
+                                            </Button>
                                           </div>
-                                          <p className="text-sm text-gray-300">{comment.content}</p>
                                         </div>
-                                      ))}
-                                    </div>
-                                  ) : (
-                                    <div className="bg-gray-700 rounded p-4 text-center text-gray-400 text-sm">
-                                      <p>Nenhum comentário ainda. Seja o primeiro a comentar!</p>
-                                    </div>
-                                  )}
-                                </div>
-                              ) : (
-                                <div className="bg-gray-700 rounded p-4 text-center text-gray-400 text-sm">
-                                  <p>Faça login para comentar</p>
-                                </div>
-                              )}
+
+                                        {/* Comments Section */}
+                                        <div>
+                                          <h4 className="font-semibold mb-2">Comentários ({getDisplayComments().length})</h4>
+                                          <div className="space-y-2 max-h-48 overflow-y-auto mb-3">
+                                            {getDisplayComments().length > 0 ? (
+                                              getDisplayComments().map((comment) => (
+                                                <div key={comment.id} className="p-2 bg-gray-700 rounded text-sm">
+                                                  <p className="text-gray-300">{comment.content}</p>
+                                                  <p className="text-xs text-gray-500 mt-1">
+                                                    {new Date(comment.createdAt).toLocaleString('pt-BR')}
+                                                  </p>
+                                                </div>
+                                              ))
+                                            ) : (
+                                              <p className="text-gray-400 text-sm">Nenhum comentário ainda. Seja o primeiro a comentar!</p>
+                                            )}
+                                          </div>
+                                          <div className="flex gap-2">
+                                            <input
+                                              type="text"
+                                              value={commentText}
+                                              onChange={(e) => setCommentText(e.target.value)}
+                                              onKeyPress={(e) => {
+                                                if (e.key === 'Enter') {
+                                                  handleAddComment();
+                                                }
+                                              }}
+                                              placeholder="Adicione um comentário..."
+                                              className="flex-1 px-3 py-2 bg-gray-700 rounded border border-gray-600 text-white placeholder-gray-400 focus:outline-none focus:border-blue-500"
+                                            />
+                                            <Button
+                                              onClick={handleAddComment}
+                                              disabled={addCommentMutation.isPending}
+                                              className="bg-blue-600 hover:bg-blue-700"
+                                            >
+                                              <Send className="w-4 h-4" />
+                                            </Button>
+                                          </div>
+                                        </div>
+                                      </div>
+                                    )}
+                                  </div>
+                                ))}
+                              </div>
                             </div>
                           </div>
                         )}
@@ -462,12 +423,6 @@ export default function CoursePage() {
                   </div>
                 </div>
               </>
-            )}
-
-            {!expandedRound && (
-              <div className="bg-gray-800 rounded-lg p-12 text-center">
-                <p className="text-gray-400 text-lg">Selecione uma Rodada no menu lateral para começar</p>
-              </div>
             )}
           </div>
         </div>
