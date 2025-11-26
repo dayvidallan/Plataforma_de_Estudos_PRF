@@ -321,6 +321,107 @@ export const appRouter = router({
       await db.delete(topics).where(eq(topics.id, input.topicId));
       return { success: true };
     }),
+    // Listar Usuários
+    getUsers: protectedProcedure.query(async ({ ctx }) => {
+      if (ctx.user.role !== 'admin') throw new Error('Unauthorized');
+      const { getDb } = await import("../server/db");
+      const { users } = await import("../drizzle/schema");
+
+      const db = await getDb();
+      if (!db) throw new Error('Database not available');
+
+      return await db.select().from(users);
+    }),
+
+    // Criar Usuário
+    createUser: protectedProcedure.input((val: unknown) => {
+      if (typeof val === 'object' && val !== null && 'email' in val && 'name' in val && 'password' in val) {
+        return {
+          email: (val as { email: unknown }).email as string,
+          name: (val as { name: unknown }).name as string,
+          password: (val as { password: unknown }).password as string,
+          role: (val as { role?: unknown }).role as 'admin' | 'user' | undefined,
+        };
+      }
+      throw new Error('Invalid input');
+    }).mutation(async ({ ctx, input }) => {
+      if (ctx.user.role !== 'admin') throw new Error('Unauthorized');
+      const { getDb } = await import("../server/db");
+      const { users } = await import("../drizzle/schema");
+      const bcrypt = await import("bcryptjs");
+
+      const db = await getDb();
+      if (!db) throw new Error('Database not available');
+
+      const hashedPassword = await bcrypt.hash(input.password, 10);
+
+      const result = await db.insert(users).values({
+        email: input.email,
+        name: input.name,
+        password: hashedPassword,
+        role: input.role || 'user',
+        openId: `temp-${Date.now()}`,
+      });
+
+      return { success: true, id: result[0].insertId };
+    }),
+
+    // Editar Usuário
+    updateUser: protectedProcedure.input((val: unknown) => {
+      if (typeof val === 'object' && val !== null && 'id' in val) {
+        return {
+          id: (val as { id: unknown }).id as number,
+          name: (val as { name?: unknown }).name as string | undefined,
+          password: (val as { password?: unknown }).password as string | undefined,
+          role: (val as { role?: unknown }).role as 'admin' | 'user' | undefined,
+        };
+      }
+      throw new Error('Invalid input');
+    }).mutation(async ({ ctx, input }) => {
+      if (ctx.user.role !== 'admin') throw new Error('Unauthorized');
+      const { getDb } = await import("../server/db");
+      const { users } = await import("../drizzle/schema");
+      const { eq } = await import("drizzle-orm");
+      const bcrypt = await import("bcryptjs");
+
+      const db = await getDb();
+      if (!db) throw new Error('Database not available');
+
+      const updateData: Record<string, unknown> = {};
+      if (input.name) updateData.name = input.name;
+      if (input.role) updateData.role = input.role;
+      if (input.password) {
+        updateData.password = await bcrypt.hash(input.password, 10);
+      }
+
+      if (Object.keys(updateData).length === 0) {
+        throw new Error('No fields to update');
+      }
+
+      await db.update(users)
+        .set(updateData)
+        .where(eq(users.id, input.id));
+      return { success: true };
+    }),
+
+    // Deletar Usuário
+    deleteUser: protectedProcedure.input((val: unknown) => {
+      if (typeof val === 'object' && val !== null && 'userId' in val) {
+        return { userId: (val as { userId: unknown }).userId as number };
+      }
+      throw new Error('Invalid input');
+    }).mutation(async ({ ctx, input }) => {
+      if (ctx.user.role !== 'admin') throw new Error('Unauthorized');
+      const { getDb } = await import("../server/db");
+      const { users } = await import("../drizzle/schema");
+      const { eq } = await import("drizzle-orm");
+
+      const db = await getDb();
+      if (!db) throw new Error('Database not available');
+
+      await db.delete(users).where(eq(users.id, input.userId));
+      return { success: true };
+    }),
   }),
 });
 
